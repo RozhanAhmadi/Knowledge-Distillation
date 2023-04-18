@@ -63,7 +63,7 @@ def get_margin_from_BN(bn):
 
 def compute_fsp(g , f_size):
         fsp_list = []
-        for i in range(f_size):
+        for i in range(f_size-1):
             bot, top = g[i], g[i + 1]
             b_H, t_H = bot.shape[2], top.shape[2]
             if b_H > t_H:
@@ -72,8 +72,10 @@ def compute_fsp(g , f_size):
                 top = F.adaptive_avg_pool2d(top, (b_H, b_H))
             else:
                 pass
+
             bot = bot.unsqueeze(1)
             top = top.unsqueeze(2)
+
             bot = bot.view(bot.shape[0], bot.shape[1], bot.shape[2], -1)
             top = top.view(top.shape[0], top.shape[1], top.shape[2], -1)
 
@@ -112,116 +114,133 @@ class Distiller(nn.Module):
         s_feats, s_out = self.s_net.extract_feature(x)
         feat_num = len(t_feats)
 
-        pa_loss = 0 
-        if self.args.pa_lambda is not None: # pairwise loss
-          feat_T = t_feats[4]
-          feat_S = s_feats[4]
-          total_w, total_h = feat_T.shape[2], feat_T.shape[3]
-          patch_w, patch_h = int(total_w*self.scale), int(total_h*self.scale)
-          maxpool = nn.MaxPool2d(kernel_size=(patch_w, patch_h), stride=(patch_w, patch_h), padding=0, ceil_mode=True) # change
-          pa_loss = self.args.pa_lambda * self.criterion(maxpool(feat_S), maxpool(feat_T))
-
-        sp_loss = 0 
-        if self.args.sp_lambda is not None: # pairwise loss
-          feat_T = t_feats[4]
-          feat_S = s_feats[4]
-
-          bsz = feat_S.shape[0]
-          feat_S = feat_S.view(bsz, -1)
-          feat_T = feat_T.view(bsz, -1)
-          
-          G_s = torch.mm(feat_S, torch.t(feat_S))        
-          G_s = torch.nn.functional.normalize(G_s)
-          G_t = torch.mm(feat_T, torch.t(feat_T))
-          G_t = torch.nn.functional.normalize(G_t)
-
-          G_diff = G_t - G_s
-          sp_loss = self.args.sp_lambda * (G_diff * G_diff).view(-1, 1).sum(0) / (bsz * bsz)    
-
+        
+        
         fsp_loss = 0 
         if self.args.fsp_lambda is not None: # pairwise loss
-          bot_t, top_t = t_feats[4], t_feats[5]
-          bot_s, top_s = s_feats[4], s_feats[5]
 
-          b_H_t, t_H_t = bot_t.shape[2], top_t.shape[2]
-          b_H_s, t_H_s = bot_s.shape[2], top_s.shape[2]
+          num_layers = len(t_feats)   
+          new_num_channels = t_out.shape[1]
 
-          if b_H_t > t_H_t:
-              bot_t = F.adaptive_avg_pool2d(bot_t, (t_H_t, t_H_t))
-          elif b_H_t < t_H_t:
-              top_t = F.adaptive_avg_pool2d(top_t, (b_H_t, b_H_t))
+          for layer_idx in range(num_layers):
+            in_channels_t = t_feats[layer_idx].shape[1]
+            in_channels_s = s_feats[layer_idx].shape[1]
+
+            teacher_layer = nn.Conv2d(in_channels=in_channels_t, out_channels=new_num_channels, kernel_size=1).cuda()
+            student_layer = nn.Conv2d(in_channels=in_channels_s, out_channels=new_num_channels, kernel_size=1).cuda() 
+
+            t_feats[layer_idx] = teacher_layer(t_feats[layer_idx])
+            s_feats[layer_idx] = student_layer(s_feats[layer_idx])
+
+          fsp_t_list = compute_fsp(t_feats , len(t_feats))
+          fsp_s_list = compute_fsp(s_feats , len(s_feats))
+
+          loss_group = ([compute_fsp_loss(s, t) for s, t in zip(fsp_s_list, fsp_t_list)])
+          print('loss_group: ', loss_group)
+          # tensor_stacked = torch.stack(loss_group, dim=0)
+          # tensor_mean = torch.mean(tensor_stacked, dim=0)
+          print('loss_group_mean: ', sum(loss_group))
+
+          fsp_loss =  self.args.fsp_lambda * 2
+
+          # bot_t, top_t = t_feats[1], t_feats[2]
+          # bot_s, top_s = s_feats[1], s_feats[2]
+
+          # print('bot_t: ' , bot_t.shape)
+          # print('top_t: ' , top_t.shape)
+
+          # print('bot_s: ' , bot_s.shape)
+          # print('top_s: ' , top_s.shape)
+
+          # b_H_t, t_H_t = bot_t.shape[2], top_t.shape[2]
+          # b_C_t, t_C_t = bot_t.shape[1], top_t.shape[1]
           
-          if b_H_s > t_H_s:
-              bot_s = F.adaptive_avg_pool2d(bot_s, (t_H_s, t_H_s))
-          elif b_H_s < t_H_s:
-              top_s = F.adaptive_avg_pool2d(top_s, (b_H_s, b_H_s))
+          # b_H_s, t_H_s = bot_s.shape[2], top_s.shape[2]
+          # b_C_s, t_C_s = bot_s.shape[1], top_s.shape[1]
 
-          bot_t = bot_t.unsqueeze(1)
-          top_t = top_t.unsqueeze(2)
-          bot_s = bot_s.unsqueeze(1)
-          top_s = top_s.unsqueeze(2)
-
-          bot_t = bot_t.view(bot_t.shape[0], bot_t.shape[1], bot_t.shape[2], -1)
-          top_t = top_t.view(top_t.shape[0], top_t.shape[1], top_t.shape[2], -1)
-          bot_s = bot_s.view(bot_s.shape[0], bot_s.shape[1], bot_s.shape[2], -1)
-          top_s = top_s.view(top_s.shape[0], top_s.shape[1], top_s.shape[2], -1)
-
-          fsp_t = (bot_t * top_t).mean(-1)
-          fsp_s = (bot_s * top_s).mean(-1)
+          # if b_H_t > t_H_t:
+          #     bot_t = F.adaptive_avg_pool2d(bot_t, (t_H_t, t_H_t))
+          # elif b_H_t < t_H_t:
+          #     top_t = F.adaptive_avg_pool2d(top_t, (b_H_t, b_H_t))
 
 
-          fsp_t = torch.nn.functional.normalize(fsp_t)
-          fsp_s = torch.nn.functional.normalize(fsp_s)
+          # if b_C_t > t_C_t:
+          #   downsample = nn.Conv2d(in_channels=b_C_t, out_channels=t_C_t, kernel_size=1).cuda()
+          #   bot_t = downsample(bot_t)
+          # elif b_C_t < t_C_t:
+          #   downsample = nn.Conv2d(in_channels=t_C_t, out_channels=b_C_t, kernel_size=1).cuda()
+          #   top_t = downsample(top_t)
+          
+          # print('xx1')
 
-          fsp_loss =  self.args.fsp_lambda * (fsp_s - fsp_t).pow(2).mean()
+          # if b_H_s > t_H_s:
+          #     bot_s = F.adaptive_avg_pool2d(bot_s, (t_H_s, t_H_s))
+          # elif b_H_s < t_H_s:
+          #     top_s = F.adaptive_avg_pool2d(top_s, (b_H_s, b_H_s))
+
+          # if b_C_s > t_C_s:
+          #   downsample = nn.Conv2d(in_channels=b_C_s, out_channels=t_C_s, kernel_size=1).cuda()
+          #   bot_s = downsample(bot_s)
+          # elif b_C_s < t_C_s:
+          #   downsample = nn.Conv2d(in_channels=t_C_s, out_channels=b_C_s, kernel_size=1).cuda()
+          #   top_s = downsample(top_s)
+
+          # print('bot_t: ' , bot_t.shape)
+          # print('top_t: ' , top_t.shape)
+
+          # print('bot_s: ' , bot_s.shape)
+          # print('top_s: ' , top_s.shape)
+
+          # print('xx2')
+
+          # # bot_t = bot_t.unsqueeze(1)
+          # # top_t = top_t.unsqueeze(2)
+          # # bot_s = bot_s.unsqueeze(1)
+          # # top_s = top_s.unsqueeze(2)
+          
+          # print('bot_t: ' , bot_t.shape)
+          # print('top_t: ' , top_t.shape)
+
+          # print('bot_s: ' , bot_s.shape)
+          # print('top_s: ' , top_s.shape)
+
+          # print('xx3')
+
+          # bot_t = bot_t.view(bot_t.shape[0], bot_t.shape[1], bot_t.shape[2], -1)
+          # top_t = top_t.view(top_t.shape[0], top_t.shape[1], top_t.shape[2], -1)
+          # bot_s = bot_s.view(bot_s.shape[0], bot_s.shape[1], bot_s.shape[2], -1)
+          # top_s = top_s.view(top_s.shape[0], top_s.shape[1], top_s.shape[2], -1)
+
+          # print('bot_t: ' , bot_t.shape)
+          # print('top_t: ' , top_t.shape)
+
+          # print('bot_s: ' , bot_s.shape)
+          # print('top_s: ' , top_s.shape)
+
+          # print('xx4')
+
+          
+          # # print('bot_t: ' , bot_t.shape)
+
+          # fsp_t = (bot_t * top_t).mean(-1)
+          # fsp_s = (bot_s * top_s).mean(-1)
+
+          # # print('xx5')
+
+          # fsp_t = torch.nn.functional.normalize(fsp_t)
+          # fsp_s = torch.nn.functional.normalize(fsp_s)
+
+          # f_C_t, f_C_s = fsp_t.shape[1], fsp_s.shape[1]
+
+          # if f_C_t > f_C_s:
+          #   downsample = nn.Conv2d(in_channels=f_C_t, out_channels=f_C_s, kernel_size=1).cuda()
+          #   fsp_t = downsample(fsp_t)
+          # elif f_C_s > f_C_t:
+          #   downsample = nn.Conv2d(in_channels=f_C_s, out_channels=f_C_t, kernel_size=1).cuda()
+          #   fsp_s = downsample(fsp_s)
+
+          # fsp_loss =  self.args.fsp_lambda * (fsp_s - fsp_t).pow(2).mean()
           # fsp_loss = self.args.fsp_lambda * [compute_fsp_loss(s, t) for s, t in zip(s_fsp, t_fsp)]
-          
-   
-
-        pi_loss = 0
-        if self.args.pi_lambda is not None: # pixelwise loss
-          TF = F.normalize(t_feats[5].pow(2).mean(1)) 
-          SF = F.normalize(s_feats[5].pow(2).mean(1)) 
-          pi_loss = self.args.pi_lambda * (TF - SF).pow(2).mean()
         
-        
-        ic_loss = 0
-        if self.args.ic_lambda is not None: #logits loss
-          b, c, h, w = s_out.shape
-          s_logit = torch.reshape(s_out, (b, c, h*w))
-          t_logit = torch.reshape(t_out, (b, c, h*w))
-
-          ICCT = torch.bmm(t_logit, t_logit.permute(0,2,1))
-          ICCT = torch.nn.functional.normalize(ICCT, dim = 2)
-
-          ICCS = torch.bmm(s_logit, s_logit.permute(0,2,1))
-          ICCS = torch.nn.functional.normalize(ICCS, dim = 2)
-
-          G_diff = ICCS - ICCT
-          lo_loss = self.args.ic_lambda * (G_diff * G_diff).view(b, -1).sum() / (c*b)
-        
-        
-        
-        lo_loss = 0
-        if self.args.lo_lambda is not None: #logits loss
-          #lo_loss =  self.args.lo_lambda * torch.nn.KLDivLoss()(F.log_softmax(s_out / self.temperature, dim=1), F.softmax(t_out / self.temperature, dim=1))
-          b, c, h, w = s_out.shape
-          s_logit_t = torch.reshape(s_out, (b, c, h*w))
-          t_logit_t = torch.reshape(t_out, (b, c, h*w))
-
-          s_logit = F.softmax(s_logit_t / self.temperature, dim=2)
-          t_logit = F.softmax(t_logit_t / self.temperature, dim=2)
-          kl = torch.nn.KLDivLoss(reduction="batchmean")
-          ICCS = torch.empty((21,21)).cuda()
-          ICCT = torch.empty((21,21)).cuda()
-          for i in range(21):
-            for j in range(i, 21):
-              ICCS[j, i] = ICCS[i, j] = kl(s_logit[:, i], s_logit[:, j])
-              ICCT[j, i] = ICCT[i, j] = kl(t_logit[:, i], t_logit[:, j])
-
-          ICCS = torch.nn.functional.normalize(ICCS, dim = 1)
-          ICCT = torch.nn.functional.normalize(ICCT, dim = 1)
-          lo_loss =  self.args.lo_lambda * (ICCS - ICCT).pow(2).mean()/b 
-        
-        kd_loss = pa_loss + pi_loss + ic_loss + lo_loss + sp_loss + fsp_loss
+        kd_loss = fsp_loss
         return s_out, kd_loss

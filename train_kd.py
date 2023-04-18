@@ -2,7 +2,6 @@ import argparse
 import os
 import numpy as np
 from tqdm import tqdm
-import wandb
 
 from mypath import Path
 from dataloaders import make_data_loader
@@ -34,7 +33,7 @@ class Trainer(object):
                              output_stride=args.out_stride,
                              sync_bn=args.sync_bn,
                              freeze_bn=args.freeze_bn)
-        checkpoint = torch.load('/kaggle/working/' + args.teacher_path)
+        checkpoint = torch.load(args.teacher_path)
         self.t_net.load_state_dict(checkpoint['state_dict'])
 
         self.s_net = DeepLab(num_classes=self.nclass,
@@ -127,13 +126,13 @@ class Trainer(object):
             loss = loss_seg + kd_loss
             
             loss.backward()
+            print(xx)
             optimizer.step()
             train_loss += loss.item()
             tbar.set_description('Train loss: %.3f' % (train_loss / (i + 1)))
 
         print('[Epoch: %d, numImages: %5d]' % (epoch, i * self.args.batch_size + image.data.shape[0]))
         print('Loss: %.3f' % train_loss)
-        wandb.log({"train loss": train_loss})
 
         if self.args.no_val:
             # save checkpoint every epoch
@@ -174,7 +173,6 @@ class Trainer(object):
         print('[Epoch: %d, numImages: %5d]' % (epoch, i * self.args.batch_size + image.data.shape[0]))
         print("Acc:{}, Acc_class:{}, mIoU:{}, fwIoU: {}".format(Acc, Acc_class, mIoU, FWIoU))
         print('Loss: %.3f' % test_loss)
-        wandb.log({"test loss": test_loss, "mIOU": mIoU})
 
         new_pred = mIoU
         if new_pred > self.best_pred:
@@ -288,17 +286,7 @@ def main():
         except ValueError:
             raise ValueError('Argument --gpu_ids must be a comma-separated list of integers only')
             
-            
-     
-    wandb.init(project="Knowledge Distillation", name=args.wandb_name,
-      config={
-      "learning_rate": 0.007,
-      "architecture": "DeepLab",
-      "dataset": "PascalVoc 2012",
-      "epochs": args.epochs,
-      })
-     
-    
+               
 
     # default settings for epochs, batch_size and lr
     if args.epochs is None:
@@ -336,7 +324,6 @@ def main():
         if not trainer.args.no_val and epoch % args.eval_interval == (args.eval_interval - 1):
             trainer.validation(epoch)
             
-    wandb.finish()
 
 
 if __name__ == "__main__":
