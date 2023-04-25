@@ -63,7 +63,7 @@ def get_margin_from_BN(bn):
 
 def compute_fsp(g , f_size):
         fsp_list = []
-        # test commit
+        # test commit 2
         for i in range(f_size-1):
             bot, top = g[i], g[i + 1]
             b_H, t_H = bot.shape[2], top.shape[2]
