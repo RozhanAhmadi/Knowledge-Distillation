@@ -63,7 +63,6 @@ def get_margin_from_BN(bn):
 
 def compute_fsp(g , f_size):
         fsp_list = []
-        # test commit 2
         for i in range(f_size-1):
             bot, top = g[i], g[i + 1]
             b_H, t_H = bot.shape[2], top.shape[2]
@@ -74,14 +73,28 @@ def compute_fsp(g , f_size):
             else:
                 pass
 
+            # print('layer: ', i , ' bot before reshape view: ', bot.shape)
+            # print('layer: ', (i + 1) , ' top before reshape view: ', top.shape)
+
+            bot = bot.view(bot.shape[0], bot.shape[1], -1)
+            top = top.view(top.shape[0], top.shape[1], -1)
+
             bot = bot.unsqueeze(1)
             top = top.unsqueeze(2)
 
-            bot = bot.view(bot.shape[0], bot.shape[1], bot.shape[2], -1)
-            top = top.view(top.shape[0], top.shape[1], top.shape[2], -1)
+            
+            # print('layer: ', i , ' bot after reshape view: ', bot.shape)
+            # print('layer: ', (i + 1) , ' top after reshape view: ', top.shape)
 
+            # bot = torch.nn.functional.normalize(bot , dim = -1)
+            # top = torch.nn.functional.normalize(top , dim = -1)
+            
             fsp = (bot * top).mean(-1)
+
+            # print('fsp: ', fsp.shape)
+
             fsp_list.append(fsp)
+
         return fsp_list
 
 def compute_fsp_loss(s, t):
@@ -121,127 +134,31 @@ class Distiller(nn.Module):
         if self.args.fsp_lambda is not None: # pairwise loss
 
           num_layers = len(t_feats)   
-          new_num_channels = t_out.shape[1]
+          new_num_channels = 70 #t_out.shape[1]
 
           for layer_idx in range(num_layers):
             in_channels_t = t_feats[layer_idx].shape[1]
             in_channels_s = s_feats[layer_idx].shape[1]
-
+            # print('layer: ', layer_idx , ' t_feats[layer_idx] before: ', t_feats[layer_idx].shape)
+            # print('layer: ', layer_idx , ' s_feats[layer_idx] before: ', s_feats[layer_idx].shape)
             teacher_layer = nn.Conv2d(in_channels=in_channels_t, out_channels=new_num_channels, kernel_size=1).cuda()
             student_layer = nn.Conv2d(in_channels=in_channels_s, out_channels=new_num_channels, kernel_size=1).cuda() 
 
             t_feats[layer_idx] = teacher_layer(t_feats[layer_idx])
             s_feats[layer_idx] = student_layer(s_feats[layer_idx])
+            # print('layer: ', layer_idx , ' t_feats[layer_idx] after : ', t_feats[layer_idx].shape)
+            # print('layer: ', layer_idx , ' s_feats[layer_idx] after : ', s_feats[layer_idx].shape)
 
           fsp_t_list = compute_fsp(t_feats , len(t_feats))
           fsp_s_list = compute_fsp(s_feats , len(s_feats))
 
           loss_group = ([compute_fsp_loss(s, t) for s, t in zip(fsp_s_list, fsp_t_list)])
-          print('loss_group: ', loss_group)
-          # tensor_stacked = torch.stack(loss_group, dim=0)
-          # tensor_mean = torch.mean(tensor_stacked, dim=0)
-          print('loss_group_mean: ', sum(loss_group))
-
-          fsp_loss =  self.args.fsp_lambda * 2
-
-          # bot_t, top_t = t_feats[1], t_feats[2]
-          # bot_s, top_s = s_feats[1], s_feats[2]
-
-          # print('bot_t: ' , bot_t.shape)
-          # print('top_t: ' , top_t.shape)
-
-          # print('bot_s: ' , bot_s.shape)
-          # print('top_s: ' , top_s.shape)
-
-          # b_H_t, t_H_t = bot_t.shape[2], top_t.shape[2]
-          # b_C_t, t_C_t = bot_t.shape[1], top_t.shape[1]
-          
-          # b_H_s, t_H_s = bot_s.shape[2], top_s.shape[2]
-          # b_C_s, t_C_s = bot_s.shape[1], top_s.shape[1]
-
-          # if b_H_t > t_H_t:
-          #     bot_t = F.adaptive_avg_pool2d(bot_t, (t_H_t, t_H_t))
-          # elif b_H_t < t_H_t:
-          #     top_t = F.adaptive_avg_pool2d(top_t, (b_H_t, b_H_t))
+          loss = sum(loss_group)
+          # print('loss_group: ', loss_group)
+          # print('loss_group_mean: ', sum(loss_group))
+          fsp_loss =  self.args.fsp_lambda * loss
 
 
-          # if b_C_t > t_C_t:
-          #   downsample = nn.Conv2d(in_channels=b_C_t, out_channels=t_C_t, kernel_size=1).cuda()
-          #   bot_t = downsample(bot_t)
-          # elif b_C_t < t_C_t:
-          #   downsample = nn.Conv2d(in_channels=t_C_t, out_channels=b_C_t, kernel_size=1).cuda()
-          #   top_t = downsample(top_t)
-          
-          # print('xx1')
-
-          # if b_H_s > t_H_s:
-          #     bot_s = F.adaptive_avg_pool2d(bot_s, (t_H_s, t_H_s))
-          # elif b_H_s < t_H_s:
-          #     top_s = F.adaptive_avg_pool2d(top_s, (b_H_s, b_H_s))
-
-          # if b_C_s > t_C_s:
-          #   downsample = nn.Conv2d(in_channels=b_C_s, out_channels=t_C_s, kernel_size=1).cuda()
-          #   bot_s = downsample(bot_s)
-          # elif b_C_s < t_C_s:
-          #   downsample = nn.Conv2d(in_channels=t_C_s, out_channels=b_C_s, kernel_size=1).cuda()
-          #   top_s = downsample(top_s)
-
-          # print('bot_t: ' , bot_t.shape)
-          # print('top_t: ' , top_t.shape)
-
-          # print('bot_s: ' , bot_s.shape)
-          # print('top_s: ' , top_s.shape)
-
-          # print('xx2')
-
-          # # bot_t = bot_t.unsqueeze(1)
-          # # top_t = top_t.unsqueeze(2)
-          # # bot_s = bot_s.unsqueeze(1)
-          # # top_s = top_s.unsqueeze(2)
-          
-          # print('bot_t: ' , bot_t.shape)
-          # print('top_t: ' , top_t.shape)
-
-          # print('bot_s: ' , bot_s.shape)
-          # print('top_s: ' , top_s.shape)
-
-          # print('xx3')
-
-          # bot_t = bot_t.view(bot_t.shape[0], bot_t.shape[1], bot_t.shape[2], -1)
-          # top_t = top_t.view(top_t.shape[0], top_t.shape[1], top_t.shape[2], -1)
-          # bot_s = bot_s.view(bot_s.shape[0], bot_s.shape[1], bot_s.shape[2], -1)
-          # top_s = top_s.view(top_s.shape[0], top_s.shape[1], top_s.shape[2], -1)
-
-          # print('bot_t: ' , bot_t.shape)
-          # print('top_t: ' , top_t.shape)
-
-          # print('bot_s: ' , bot_s.shape)
-          # print('top_s: ' , top_s.shape)
-
-          # print('xx4')
-
-          
-          # # print('bot_t: ' , bot_t.shape)
-
-          # fsp_t = (bot_t * top_t).mean(-1)
-          # fsp_s = (bot_s * top_s).mean(-1)
-
-          # # print('xx5')
-
-          # fsp_t = torch.nn.functional.normalize(fsp_t)
-          # fsp_s = torch.nn.functional.normalize(fsp_s)
-
-          # f_C_t, f_C_s = fsp_t.shape[1], fsp_s.shape[1]
-
-          # if f_C_t > f_C_s:
-          #   downsample = nn.Conv2d(in_channels=f_C_t, out_channels=f_C_s, kernel_size=1).cuda()
-          #   fsp_t = downsample(fsp_t)
-          # elif f_C_s > f_C_t:
-          #   downsample = nn.Conv2d(in_channels=f_C_s, out_channels=f_C_t, kernel_size=1).cuda()
-          #   fsp_s = downsample(fsp_s)
-
-          # fsp_loss =  self.args.fsp_lambda * (fsp_s - fsp_t).pow(2).mean()
-          # fsp_loss = self.args.fsp_lambda * [compute_fsp_loss(s, t) for s, t in zip(s_fsp, t_fsp)]
         
         kd_loss = fsp_loss
         return s_out, kd_loss
