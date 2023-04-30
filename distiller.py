@@ -73,30 +73,18 @@ def compute_fsp(g , f_size):
             else:
                 pass
 
-            # print('layer: ', i , ' bot before reshape view: ', bot.shape)
-            # print('layer: ', (i + 1) , ' top before reshape view: ', top.shape)
-
             bot = bot.view(bot.shape[0], bot.shape[1], -1)
             top = top.view(top.shape[0], top.shape[1], -1)
 
             bot = bot.unsqueeze(1)
             top = top.unsqueeze(2)
-
-            
-            # print('layer: ', i , ' bot after reshape view: ', bot.shape)
-            # print('layer: ', (i + 1) , ' top after reshape view: ', top.shape)
-
-            # bot = torch.nn.functional.normalize(bot , dim = -1)
-            # top = torch.nn.functional.normalize(top , dim = -1)
             
             fsp = (bot * top).mean(-1)
-
-            # print('fsp: ', fsp.shape)
 
             fsp_list.append(fsp)
 
         return fsp_list
-
+        
 def compute_fsp_loss(s, t):
         return (s - t).pow(2).mean()
 
@@ -128,8 +116,32 @@ class Distiller(nn.Module):
         s_feats, s_out = self.s_net.extract_feature(x)
         feat_num = len(t_feats)
 
-        
-        
+        pa_loss = 0 
+        if self.args.pa_lambda is not None: # pairwise loss
+          feat_T = t_feats[4]
+          feat_S = s_feats[4]
+          total_w, total_h = feat_T.shape[2], feat_T.shape[3]
+          patch_w, patch_h = int(total_w*self.scale), int(total_h*self.scale)
+          maxpool = nn.MaxPool2d(kernel_size=(patch_w, patch_h), stride=(patch_w, patch_h), padding=0, ceil_mode=True) # change
+          pa_loss = self.args.pa_lambda * self.criterion(maxpool(feat_S), maxpool(feat_T))
+
+        sp_loss = 0 
+        if self.args.sp_lambda is not None: # pairwise loss
+          feat_T = t_feats[4]
+          feat_S = s_feats[4]
+
+          bsz = feat_S.shape[0]
+          feat_S = feat_S.view(bsz, -1)
+          feat_T = feat_T.view(bsz, -1)
+          
+          G_s = torch.mm(feat_S, torch.t(feat_S))        
+          G_s = torch.nn.functional.normalize(G_s)
+          G_t = torch.mm(feat_T, torch.t(feat_T))
+          G_t = torch.nn.functional.normalize(G_t)
+
+          G_diff = G_t - G_s
+          sp_loss = self.args.sp_lambda * (G_diff * G_diff).view(-1, 1).sum(0) / (bsz * bsz)    
+
         fsp_loss = 0 
         if self.args.fsp_lambda is not None: # pairwise loss
 
@@ -139,26 +151,65 @@ class Distiller(nn.Module):
           for layer_idx in range(num_layers):
             in_channels_t = t_feats[layer_idx].shape[1]
             in_channels_s = s_feats[layer_idx].shape[1]
-            # print('layer: ', layer_idx , ' t_feats[layer_idx] before: ', t_feats[layer_idx].shape)
-            # print('layer: ', layer_idx , ' s_feats[layer_idx] before: ', s_feats[layer_idx].shape)
             teacher_layer = nn.Conv2d(in_channels=in_channels_t, out_channels=new_num_channels, kernel_size=1).cuda()
             student_layer = nn.Conv2d(in_channels=in_channels_s, out_channels=new_num_channels, kernel_size=1).cuda() 
 
             t_feats[layer_idx] = teacher_layer(t_feats[layer_idx])
             s_feats[layer_idx] = student_layer(s_feats[layer_idx])
-            # print('layer: ', layer_idx , ' t_feats[layer_idx] after : ', t_feats[layer_idx].shape)
-            # print('layer: ', layer_idx , ' s_feats[layer_idx] after : ', s_feats[layer_idx].shape)
 
           fsp_t_list = compute_fsp(t_feats , len(t_feats))
           fsp_s_list = compute_fsp(s_feats , len(s_feats))
 
           loss_group = ([compute_fsp_loss(s, t) for s, t in zip(fsp_s_list, fsp_t_list)])
           loss = sum(loss_group)
-          # print('loss_group: ', loss_group)
-          # print('loss_group_mean: ', sum(loss_group))
           fsp_loss =  self.args.fsp_lambda * loss
+          
+   
 
-
+        pi_loss = 0
+        if self.args.pi_lambda is not None: # pixelwise loss
+          TF = F.normalize(t_feats[5].pow(2).mean(1)) 
+          SF = F.normalize(s_feats[5].pow(2).mean(1)) 
+          pi_loss = self.args.pi_lambda * (TF - SF).pow(2).mean()
         
-        kd_loss = fsp_loss
+        
+        ic_loss = 0
+        if self.args.ic_lambda is not None: #logits loss
+          b, c, h, w = s_out.shape
+          s_logit = torch.reshape(s_out, (b, c, h*w))
+          t_logit = torch.reshape(t_out, (b, c, h*w))
+
+          ICCT = torch.bmm(t_logit, t_logit.permute(0,2,1))
+          ICCT = torch.nn.functional.normalize(ICCT, dim = 2)
+
+          ICCS = torch.bmm(s_logit, s_logit.permute(0,2,1))
+          ICCS = torch.nn.functional.normalize(ICCS, dim = 2)
+
+          G_diff = ICCS - ICCT
+          lo_loss = self.args.ic_lambda * (G_diff * G_diff).view(b, -1).sum() / (c*b)
+        
+        
+        
+        lo_loss = 0
+        if self.args.lo_lambda is not None: #logits loss
+          #lo_loss =  self.args.lo_lambda * torch.nn.KLDivLoss()(F.log_softmax(s_out / self.temperature, dim=1), F.softmax(t_out / self.temperature, dim=1))
+          b, c, h, w = s_out.shape
+          s_logit_t = torch.reshape(s_out, (b, c, h*w))
+          t_logit_t = torch.reshape(t_out, (b, c, h*w))
+
+          s_logit = F.softmax(s_logit_t / self.temperature, dim=2)
+          t_logit = F.softmax(t_logit_t / self.temperature, dim=2)
+          kl = torch.nn.KLDivLoss(reduction="batchmean")
+          ICCS = torch.empty((21,21)).cuda()
+          ICCT = torch.empty((21,21)).cuda()
+          for i in range(21):
+            for j in range(i, 21):
+              ICCS[j, i] = ICCS[i, j] = kl(s_logit[:, i], s_logit[:, j])
+              ICCT[j, i] = ICCT[i, j] = kl(t_logit[:, i], t_logit[:, j])
+
+          ICCS = torch.nn.functional.normalize(ICCS, dim = 1)
+          ICCT = torch.nn.functional.normalize(ICCT, dim = 1)
+          lo_loss =  self.args.lo_lambda * (ICCS - ICCT).pow(2).mean()/b 
+        
+        kd_loss = pa_loss + pi_loss + ic_loss + lo_loss + sp_loss + fsp_loss
         return s_out, kd_loss
