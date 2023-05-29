@@ -33,7 +33,7 @@ class Trainer(object):
                              output_stride=args.out_stride,
                              sync_bn=args.sync_bn,
                              freeze_bn=args.freeze_bn)
-        checkpoint = torch.load('/kaggle/working/' + args.teacher_path)
+        checkpoint = torch.load(args.teacher_path)
         self.t_net.load_state_dict(checkpoint['state_dict'])
 
         self.s_net = DeepLab(num_classes=self.nclass,
