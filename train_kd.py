@@ -60,14 +60,23 @@ class Trainer(object):
 
         self.sp_weights = nn.ParameterList([nn.Parameter(torch.ones(1)) for _ in range(len(6))])
 
-        distill_params = [{'params': self.s_net.get_1x_lr_params(), 'lr': args.lr},
+        if self.args.sp_option == 6:
+            distill_params = [{'params': self.s_net.get_1x_lr_params(), 'lr': args.lr},
                           {'params': self.s_net.get_10x_lr_params(), 'lr': args.lr * 10},
                           {'params': self.d_net.Connectors.parameters(), 'lr': args.lr * 10},
                           {'params': self.sp_weights, 'lr': args.lr * 10}]
 
-        init_params = [{'params': self.d_net.Connectors.parameters(), 'lr': args.lr * 10},
-                       {'params': self.sp_weights, 'lr': args.lr * 10}]
+            init_params = [{'params': self.d_net.Connectors.parameters(), 'lr': args.lr * 10},
+                        {'params': self.sp_weights, 'lr': args.lr * 10}]
+        
+        else:
+            distill_params = [{'params': self.s_net.get_1x_lr_params(), 'lr': args.lr},
+                            {'params': self.s_net.get_10x_lr_params(), 'lr': args.lr * 10},
+                            {'params': self.d_net.Connectors.parameters(), 'lr': args.lr * 10}]
 
+            init_params = [{'params': self.d_net.Connectors.parameters(), 'lr': args.lr * 10}]
+
+        
         # # Define Optimizer
         self.optimizer = torch.optim.SGD(distill_params, momentum=args.momentum,
                                          weight_decay=args.weight_decay, nesterov=args.nesterov)
