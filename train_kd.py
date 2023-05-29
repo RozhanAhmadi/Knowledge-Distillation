@@ -58,11 +58,15 @@ class Trainer(object):
         self.distill_ratio = 1e-5
         self.batch_size = args.batch_size
 
+        self.sp_weights = nn.ParameterList([nn.Parameter(torch.ones(1)) for _ in range(len(6))])
+
         distill_params = [{'params': self.s_net.get_1x_lr_params(), 'lr': args.lr},
                           {'params': self.s_net.get_10x_lr_params(), 'lr': args.lr * 10},
-                          {'params': self.d_net.Connectors.parameters(), 'lr': args.lr * 10}]
+                          {'params': self.d_net.Connectors.parameters(), 'lr': args.lr * 10},
+                          {'params': self.sp_weights, 'lr': args.lr * 10}]
 
-        init_params = [{'params': self.d_net.Connectors.parameters(), 'lr': args.lr * 10}]
+        init_params = [{'params': self.d_net.Connectors.parameters(), 'lr': args.lr * 10},
+                       {'params': self.sp_weights, 'lr': args.lr * 10}]
 
         # # Define Optimizer
         self.optimizer = torch.optim.SGD(distill_params, momentum=args.momentum,
@@ -122,7 +126,7 @@ class Trainer(object):
             self.scheduler(optimizer, i, epoch, self.best_pred)
             optimizer.zero_grad()
             
-            output, kd_loss = self.d_net(image)
+            output, kd_loss = self.d_net(image, self.sp_weights)
             loss_seg = self.criterion(output, target)
             loss = loss_seg + kd_loss
             
