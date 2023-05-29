@@ -33,7 +33,7 @@ class Trainer(object):
                              output_stride=args.out_stride,
                              sync_bn=args.sync_bn,
                              freeze_bn=args.freeze_bn)
-        checkpoint = torch.load(args.teacher_path)
+        checkpoint = torch.load('/kaggle/working/' + args.teacher_path)
         self.t_net.load_state_dict(checkpoint['state_dict'])
 
         self.s_net = DeepLab(num_classes=self.nclass,
@@ -57,12 +57,25 @@ class Trainer(object):
         self.distill_ratio = 1e-5
         self.batch_size = args.batch_size
 
-        distill_params = [{'params': self.s_net.get_1x_lr_params(), 'lr': args.lr},
+        self.sp_weights = nn.ParameterList([nn.Parameter(torch.ones(1)) for _ in range(len(6))])
+
+        if self.args.sp_option == 6:
+            distill_params = [{'params': self.s_net.get_1x_lr_params(), 'lr': args.lr},
                           {'params': self.s_net.get_10x_lr_params(), 'lr': args.lr * 10},
-                          {'params': self.d_net.Connectors.parameters(), 'lr': args.lr * 10}]
+                          {'params': self.d_net.Connectors.parameters(), 'lr': args.lr * 10},
+                          {'params': self.sp_weights, 'lr': args.lr * 10}]
 
-        init_params = [{'params': self.d_net.Connectors.parameters(), 'lr': args.lr * 10}]
+            init_params = [{'params': self.d_net.Connectors.parameters(), 'lr': args.lr * 10},
+                        {'params': self.sp_weights, 'lr': args.lr * 10}]
+        
+        else:
+            distill_params = [{'params': self.s_net.get_1x_lr_params(), 'lr': args.lr},
+                            {'params': self.s_net.get_10x_lr_params(), 'lr': args.lr * 10},
+                            {'params': self.d_net.Connectors.parameters(), 'lr': args.lr * 10}]
 
+            init_params = [{'params': self.d_net.Connectors.parameters(), 'lr': args.lr * 10}]
+
+        
         # # Define Optimizer
         self.optimizer = torch.optim.SGD(distill_params, momentum=args.momentum,
                                          weight_decay=args.weight_decay, nesterov=args.nesterov)
@@ -121,12 +134,11 @@ class Trainer(object):
             self.scheduler(optimizer, i, epoch, self.best_pred)
             optimizer.zero_grad()
             
-            output, kd_loss = self.d_net(image)
+            output, kd_loss = self.d_net(image, self.sp_weights)
             loss_seg = self.criterion(output, target)
             loss = loss_seg + kd_loss
             
             loss.backward()
-            print(xx)
             optimizer.step()
             train_loss += loss.item()
             tbar.set_description('Train loss: %.3f' % (train_loss / (i + 1)))
@@ -183,6 +195,7 @@ class Trainer(object):
                 'state_dict': self.s_net.module.state_dict(),
                 'best_pred': self.best_pred,
             }, is_best)
+
 
 def main():
     parser = argparse.ArgumentParser(description="PyTorch DeeplabV3Plus Training")
