@@ -91,7 +91,7 @@ def compute_fsp_loss(s, t):
         return (s - t).pow(2).mean()
 
 class Distiller(nn.Module):
-    def __init__(self, t_net, s_net, args, sp_weights):
+    def __init__(self, t_net, s_net, args):
         super(Distiller, self).__init__()
 
         t_channels = t_net.get_channel_num()
@@ -111,7 +111,6 @@ class Distiller(nn.Module):
         self.criterion = sim_dis_compute
         self.temperature = 1
         self.scale = 0.5
-        self.sp_weights = sp_weights
 
     def forward(self, x, sp_weights):
 
