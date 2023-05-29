@@ -132,7 +132,24 @@ class Distiller(nn.Module):
           # feat_T = t_feats[4] #org
           # feat_S = s_feats[4] #org
           if self.args.sp_option is not None:
-            if self.args.sp_option == 6:
+
+            if self.args.sp_option == 7:
+              feat_T = t_out
+              feat_S = s_out
+
+              bsz = feat_S.shape[0]
+              feat_S = feat_S.view(bsz, -1)
+              feat_T = feat_T.view(bsz, -1)
+              
+              G_s = torch.mm(feat_S, torch.t(feat_S))        
+              G_s = torch.nn.functional.normalize(G_s) #org
+              G_t = torch.mm(feat_T, torch.t(feat_T))
+              G_t = torch.nn.functional.normalize(G_t) #org
+
+              G_diff = G_t - G_s
+              loss = (G_diff * G_diff).view(-1, 1).sum(0) / (bsz * bsz)       
+
+            elif self.args.sp_option == 6:
               loss_group = []
               for i in range (len(t_feats)):
                 feat_T = t_feats[i]
@@ -149,8 +166,9 @@ class Distiller(nn.Module):
 
                 G_diff = G_t - G_s
                 g_loss = (G_diff * G_diff).view(-1, 1).sum(0) / (bsz * bsz)   
-                loss_group.append(g_loss)
+                loss_group.append(sp_weights[i] * g_loss)
               loss = sum(loss_group)
+              
             elif self.args.sp_option < 6:
               feat_T = t_feats[self.args.sp_option]
               feat_S = s_feats[self.args.sp_option]
