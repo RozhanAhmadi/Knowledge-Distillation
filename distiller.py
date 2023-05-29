@@ -111,8 +111,9 @@ class Distiller(nn.Module):
         self.criterion = sim_dis_compute
         self.temperature = 1
         self.scale = 0.5
+        
 
-    def forward(self, x):
+    def forward(self, x, sp_weights):
 
         t_feats, t_out = self.t_net.extract_feature(x)
         s_feats, s_out = self.s_net.extract_feature(x)
