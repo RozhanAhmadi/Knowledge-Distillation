@@ -58,7 +58,7 @@ class Trainer(object):
         self.distill_ratio = 1e-5
         self.batch_size = args.batch_size
 
-        self.sp_weights = nn.ParameterList([nn.Parameter(torch.ones(1)) for _ in range(len(6))])
+        self.sp_weights = nn.ParameterList([nn.Parameter(torch.ones(1)) for _ in range(6)])
 
         if self.args.sp_option == 6:
             distill_params = [{'params': self.s_net.get_1x_lr_params(), 'lr': args.lr},
